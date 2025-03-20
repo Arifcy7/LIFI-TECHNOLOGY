@@ -40,7 +40,7 @@ def configure_styles():
 
 # GUI Functions
 def show_screen(screen):
-    for frame in (main_screen, send_screen, receive_screen, text_receive_screen):
+    for frame in (main_screen, send_screen, receive_screen, text_receive_screen, send_text_screen):
         frame.pack_forget()
     screen.pack(padx=20, pady=20, fill="both", expand=True)
 
@@ -127,7 +127,41 @@ def receive_from_arduino():
     except Exception as e:
         messagebox.showerror("Error", f"Failed to receive PDF: {str(e)}")
 
-# Text Receive Functions
+# Text Transfer Functions
+def send_text():
+    text_content = text_input.get("1.0", tk.END).strip()
+    if not text_content:
+        messagebox.showerror("Error", "Please enter some text to send")
+        return
+    
+    if arduino:
+        threading.Thread(target=send_text_to_arduino, args=(text_content,)).start()
+    else:
+        messagebox.showerror("Error", "Arduino not connected")
+
+def send_text_to_arduino(text_content):
+    try:
+        text_data = text_content.encode('utf-8')
+        chunk_size = 64
+        total_size = len(text_data)
+        sent_size = 0
+
+        send_text_progress["value"] = 0
+        arduino.write(b"START_TEXT")
+        
+        for i in range(0, total_size, chunk_size):
+            chunk = text_data[i:i + chunk_size]
+            arduino.write(chunk)
+            sent_size += len(chunk)
+            send_text_progress["value"] = (sent_size / total_size) * 100
+            root.update_idletasks()
+            time.sleep(0.1)
+
+        arduino.write(b"END_TEXT")
+        messagebox.showinfo("Success", "Text Sent Successfully!")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to send text: {str(e)}")
+
 def receive_text():
     text_receive_progress["value"] = 0
     text_display.delete('1.0', tk.END)
@@ -151,10 +185,14 @@ def receive_text_from_arduino():
                 text_receive_progress["value"] = min(100, len(received_text) / 1000 * 100)
                 root.update_idletasks()
 
-            if b"END_TEXT" in received_text.encode() or (time.time() - start_time > 15):
+            if "END_TEXT" in received_text or (time.time() - start_time > 15):
                 break
 
-        messagebox.showinfo("Success", "Text received!" if received_text else messagebox.showerror("Error", "No text received"))
+        received_text = received_text.replace("END_TEXT", "")
+        if received_text:
+            messagebox.showinfo("Success", "Text received!")
+        else:
+            messagebox.showerror("Error", "No text received")
     except Exception as e:
         messagebox.showerror("Error", f"Text receive failed: {str(e)}")
 
@@ -181,6 +219,7 @@ main_screen = ttk.Frame(root, style="TFrame")
 send_screen = ttk.Frame(root, style="TFrame")
 receive_screen = ttk.Frame(root, style="TFrame")
 text_receive_screen = ttk.Frame(root, style="TFrame")
+send_text_screen = ttk.Frame(root, style="TFrame")
 
 # Main Screen
 main_label = ttk.Label(main_screen, text="📡 Li-Fi File Transfer", 
@@ -190,9 +229,10 @@ main_label.pack(pady=40)
 button_style = {"style": "TButton", "width": 25}
 ttk.Button(main_screen, text="📤 Send PDF", command=lambda: show_screen(send_screen), **button_style).pack(pady=10)
 ttk.Button(main_screen, text="📥 Receive PDF", command=lambda: show_screen(receive_screen), **button_style).pack(pady=10)
+ttk.Button(main_screen, text="📝 Send Text", command=lambda: show_screen(send_text_screen), **button_style).pack(pady=10)
 ttk.Button(main_screen, text="📝 Receive Text", command=lambda: show_screen(text_receive_screen), **button_style).pack(pady=10)
 
-# Send Screen
+# Send PDF Screen
 ttk.Label(send_screen, text="📤 Send PDF", font=("Segoe UI", 18, "bold"), foreground=PRIMARY_COLOR).pack(pady=20)
 pdf_entry = ttk.Entry(send_screen, width=50, style="TEntry", font=("Segoe UI", 10))
 pdf_entry.pack(pady=10)
@@ -201,14 +241,23 @@ ttk.Button(send_screen, text="🚀 Start Transfer", command=send_pdf).pack(pady=
 send_progress = ttk.Progressbar(send_screen, style="Horizontal.TProgressbar", length=500)
 send_progress.pack(pady=10)
 
-# Receive Screen
+# Receive PDF Screen
 ttk.Label(receive_screen, text="📥 Receive PDF", font=("Segoe UI", 18, "bold"), foreground=PRIMARY_COLOR).pack(pady=20)
 ttk.Button(receive_screen, text="🔄 Start Receiving", command=receive_pdf).pack(pady=20)
 receive_progress = ttk.Progressbar(receive_screen, style="Horizontal.TProgressbar", length=500)
 receive_progress.pack(pady=10)
 ttk.Button(receive_screen, text="📂 Open Received PDF", command=open_pdf).pack(pady=20)
 
-# Text Receive Screen
+# Send Text Screen
+ttk.Label(send_text_screen, text="📤 Send Text", font=("Segoe UI", 18, "bold"), foreground=PRIMARY_COLOR).pack(pady=20)
+text_input = scrolledtext.ScrolledText(send_text_screen, wrap=tk.WORD, width=70, height=15,
+                                      bg="#4C566A", fg=TEXT_COLOR, insertbackground=TEXT_COLOR)
+text_input.pack(pady=10)
+ttk.Button(send_text_screen, text="🚀 Send Text", command=send_text).pack(pady=10)
+send_text_progress = ttk.Progressbar(send_text_screen, style="Horizontal.TProgressbar", length=500)
+send_text_progress.pack(pady=10)
+
+# Receive Text Screen
 ttk.Label(text_receive_screen, text="📥 Receive Text", font=("Segoe UI", 18, "bold"), foreground=PRIMARY_COLOR).pack(pady=20)
 text_display = scrolledtext.ScrolledText(text_receive_screen, wrap=tk.WORD, width=70, height=15,
                                         bg="#4C566A", fg=TEXT_COLOR, insertbackground=TEXT_COLOR)
@@ -224,7 +273,7 @@ text_receive_progress.pack(pady=10)
 def create_back_button(parent):
     return ttk.Button(parent, text="◀ Back to Main", command=lambda: show_screen(main_screen))
 
-for screen in (send_screen, receive_screen, text_receive_screen):
+for screen in (send_screen, receive_screen, text_receive_screen, send_text_screen):
     create_back_button(screen).pack(side="bottom", pady=20)
 
 show_screen(main_screen)
